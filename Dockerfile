@@ -31,6 +31,10 @@ ENV PATH="/opt/crosstool-ng/bin:${PATH}"
 # Create build directory
 WORKDIR /build
 
+RUN chown 1000:1000 /build
+
+USER 1000:1000
+
 # Copy config files and build script
 COPY configs/ /build/configs/
 COPY build.sh /build/build.sh
