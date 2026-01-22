@@ -38,7 +38,6 @@ USER 1000:1000
 # Copy config files and build script
 COPY configs/ /build/configs/
 COPY build.sh /build/build.sh
-RUN chmod +x /build/build.sh
 
 # Default command
 CMD ["/build/build.sh"]
