@@ -31,6 +31,9 @@ ENV PATH="/opt/crosstool-ng/bin:${PATH}"
 # Create build directory
 WORKDIR /build
 
+RUN groupadd -g 1000 ubuntu && \
+    useradd -m -u 1000 -g 1000 ubuntu
+
 RUN chown 1000:1000 /build
 
 USER 1000:1000
