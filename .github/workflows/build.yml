@@ -1,0 +1,150 @@
+name: Build Sysroot
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a release'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  GCC_VERSION: "10.5.0"
+  GLIBC_VERSION: "2.28"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -t sysroot-builder:latest .
+
+      - name: Build sysroot for ${{ matrix.arch }}
+        run: |
+          mkdir -p output
+          docker run --rm \
+            -v ${{ github.workspace }}/output:/output \
+            sysroot-builder:latest \
+            /build/build.sh ${{ matrix.arch }}
+
+      - name: Create release artifact
+        run: |
+          cd output
+          SYSROOT_DIR="sysroot-${{ matrix.arch }}-glibc-${{ env.GLIBC_VERSION }}"
+          ARTIFACT_NAME="vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}"
+
+          # Create tarball with single directory at top level
+          mkdir -p "${ARTIFACT_NAME}"
+          cp -a "${SYSROOT_DIR}/"* "${ARTIFACT_NAME}/"
+          tar -czvf "${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
+
+          # Clean up intermediate directory
+          rm -rf "${ARTIFACT_NAME}"
+
+          # Generate checksums
+          sha256sum "${ARTIFACT_NAME}.tar.gz" > "${ARTIFACT_NAME}.tar.gz.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}
+          path: |
+            output/vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}.tar.gz
+            output/vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}.tar.gz.sha256
+          retention-days: 30
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}
+          path: artifacts
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'artifacts/vscode-sysroot-${{ matrix.arch }}-gcc-${{ env.GCC_VERSION }}-glibc-${{ env.GLIBC_VERSION }}.tar.gz'
+
+  release:
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: VS Code Sysroot GCC ${{ env.GCC_VERSION }} GLIBC ${{ env.GLIBC_VERSION }}
+          body: |
+            ## VS Code Sysroot Release
+
+            This release contains sysroots built with:
+            - **GCC**: ${{ env.GCC_VERSION }}
+            - **GLIBC**: ${{ env.GLIBC_VERSION }}
+
+            ### Supported Architectures
+            - x86_64 (AMD64)
+            - aarch64 (ARM64)
+
+            ### Usage
+
+            These sysroots can be used with VS Code Remote Development to run VS Code Server on older Linux distributions that don't have glibc >= 2.28.
+
+            See the [VS Code Remote Development FAQ](https://code.visualstudio.com/docs/remote/faq#_can-i-run-vs-code-server-on-older-linux-distributions) for setup instructions.
+
+            ### Artifact Attestations
+
+            All artifacts in this release include [artifact attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) to establish provenance for builds.
+
+            You can verify the attestation using:
+            ```bash
+            gh attestation verify <artifact-file> --repo ${{ github.repository }}
+            ```
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.sha256
+          generate_release_notes: true
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,22 @@
+# Build outputs
+output/
+.build/
+downloads/
+
+# Toolchain directories
+x86_64-linux-gnu/
+aarch64-linux-gnu/
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+build.log.*
